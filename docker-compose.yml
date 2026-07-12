@@ -1,0 +1,9 @@
+version: '3.8'
+services:
+  telegram-bot:
+    build: .
+    container_name: english-teaching-bot
+    restart: always
+    volumes:
+      # Mount topic history so it survives container restarts
+      - ./topic_history.json:/app/topic_history.json
