@@ -21,7 +21,7 @@ if sys.platform == 'win32':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 from config import (
-    BOT_TOKEN, CHANNEL_ID, POST_INTERVAL_HOURS, TEST_INTERVAL_HOURS,
+    BOT_TOKEN, CHANNEL_ID, POST_INTERVAL_HOURS,
     TOPICS_DATA, GENERAL_TAGS
 )
 import random
@@ -170,24 +170,8 @@ class EnglishBot:
             replace_existing=True
         )
 
-        self.scheduler.add_job(
-            self.send_test,
-            'interval',
-            hours=TEST_INTERVAL_HOURS,
-            id='test_job',
-            replace_existing=True
-        )
-
-        self.scheduler.add_job(
-            self.reveal_test_answer,
-            'interval',
-            hours=TEST_INTERVAL_HOURS,
-            id='reveal_job',
-            replace_existing=True
-        )
-
         self.scheduler.start()
-        logger.info("🚀 Scheduler started — lessons every %dh, tests every %dh", POST_INTERVAL_HOURS, TEST_INTERVAL_HOURS)
+        logger.info("🚀 Scheduler started — lessons every %dh", POST_INTERVAL_HOURS)
 
     async def send_lesson(self):
         """Generate and send a lesson to the channel"""
@@ -204,7 +188,8 @@ class EnglishBot:
                         available_topics.append({'category': category, 'topic': topic, 'tags': data['tags']})
             
             if not available_topics:
-                logger.warning("All topics used! Re-using topics.")
+                logger.warning("All topics used! Resetting topic history and starting over.")
+                self.topic_history.reset_history()
                 for category, data in TOPICS_DATA.items():
                     for topic in data['topics']:
                         available_topics.append({'category': category, 'topic': topic, 'tags': data['tags']})

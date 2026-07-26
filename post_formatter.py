@@ -59,14 +59,14 @@ class PostFormatter:
             
         formatted = f"""✨ <b>{topic}</b> ✨
 
+
 {content}
 
-━━━━━━━━━━━━━━━━━━━━━━━
-💡 <b>Pro Tip:</b> <i>Save this post so you don't forget it!</i>
-⏰ <i>New English lessons every 4 hours. Stay tuned!</i>
+___________________________________
+💡 <i>Save this post so you don't forget it!</i>
+⏰ <i>Stay tuned!</i>
 
-✅Follow us:
-
+✅ <b>Follow us:</b>
 |<a href="https://t.me/+QxanmBn5JImTJfQe">Telegram</a> | <a href="https://instagram.com/englishnativetv?igshid=ZDdkNTZiNTM=">Instagram</a> | <a href="https://m.youtube.com/@englishnativetv/videos">YouTube</a>"""
 
         return formatted

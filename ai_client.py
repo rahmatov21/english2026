@@ -24,23 +24,22 @@ class AIClient:
         """Generate an English teaching lesson for a specific topic"""
         prompt = f"""You are an expert English teacher creating content for a Telegram channel called "Improve Your English".
 
-Generate a short, engaging English lesson about the following topic:
+Generate a highly engaging English lesson about the following topic:
 "{topic}"
 
-The lesson should include:
-1. A clear topic title
-2. A brief explanation (2-3 sentences)
-3. 2-3 example sentences
-4. A tip or trick to remember
+The lesson MUST follow this EXACT visual structure and style:
 
-IMPORTANT: The entire lesson MUST be in 100% English. Do NOT include translations, Chinese characters, or any other languages under any circumstances.
-IMPORTANT: Use emojis tastefully throughout your response to make it visually engaging for Telegram users. Use relevant emojis like 📚 ✍️ 💡 ✅ ⭐ 📝 🎯 🔥 and others that fit naturally. Each section should have a fitting emoji.
+1. A brief, engaging introduction paragraph (2-3 sentences) explaining the concept with a few relevant emojis.
+2. A section with 3 distinct examples or rules. Use emojis at the start of lines (like ✍️, ✅, or 🎯) and end of sentences. Use Markdown italics `_text_` for the example sentences. Format depends on the topic (e.g., numbered list for grammar rules, or bold terms for idioms/vocabulary).
+3. A tip, trick, or memory aid paragraph starting with an emoji like 💡 or 🔥.
+4. A short concluding motivational sentence with a 🌟 or 🎯.
+
+IMPORTANT: The entire lesson MUST be in 100% English. Do NOT include translations, Chinese characters, or any other languages.
+IMPORTANT: Use markdown for formatting: `_text_` for italics (use for all example sentences). 
+IMPORTANT: Do NOT include the topic title in your output. Just output the body of the lesson starting directly with the introduction paragraph.
 
 Format your response EXACTLY like this (include the markers):
-TOPIC: [topic name here]
-LESSON: [your lesson content here with examples — use emojis for visual appeal and structure]
-
-Keep it concise, friendly, educational, and emoji-rich. Make it pop on Telegram!"""
+LESSON: [your lesson body here]"""
 
         messages = [
             {"role": "system", "content": "You are an expert English teacher creating engaging, bite-sized lessons for social media. The content MUST be entirely in English with NO translations or other languages. Use relevant emojis tastefully to make content visually appealing and structured. Each section should have fitting emojis like 📚 for lessons, ✍️ for examples, 💡 for tips, ⭐ for highlights."},
