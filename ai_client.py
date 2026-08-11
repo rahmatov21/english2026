@@ -20,12 +20,22 @@ class AIClient:
         self.openrouter_model_3 = OPENROUTER_MODEL_3
         self.openrouter_base_url = OPENROUTER_BASE_URL
 
-    async def generate_lesson(self, topic: str) -> dict:
-        """Generate an English teaching lesson for a specific topic"""
+    async def generate_lesson(self, topic: str, history_summary: str = "") -> dict:
+        """Generate an English teaching lesson for a specific topic with memory context"""
+        history_block = ""
+        if history_summary:
+            history_block = f"""
+
+CRITICAL PREVIOUS CONTENT & MEMORY (DO NOT REPEAT):
+The following concepts, idioms, grammar rules, vocabulary words, and example sentences were ALREADY TAUGHT in past lessons:
+{history_summary}
+
+You MUST NOT repeat any of the above concepts, rules, vocabulary words, or example sentences! Produce a FRESH lesson covering a NEW subtopic with UNIQUE rules and UNIQUE example sentences."""
+
         prompt = f"""You are an expert English teacher creating content for a Telegram channel called "Improve Your English".
 
 Generate a highly engaging English lesson about the following topic:
-"{topic}"
+"{topic}"{history_block}
 
 The lesson MUST follow this EXACT visual structure and style:
 
@@ -42,7 +52,7 @@ Format your response EXACTLY like this (include the markers):
 LESSON: [your lesson body here]"""
 
         messages = [
-            {"role": "system", "content": "You are an expert English teacher creating engaging, bite-sized lessons for social media. The content MUST be entirely in English with NO translations or other languages. Use relevant emojis tastefully to make content visually appealing and structured. Each section should have fitting emojis like 📚 for lessons, ✍️ for examples, 💡 for tips, ⭐ for highlights."},
+            {"role": "system", "content": "You are an expert English teacher creating engaging, bite-sized lessons for social media. The content MUST be entirely in English with NO translations or other languages. Use relevant emojis tastefully to make content visually appealing and structured. Each section should have fitting emojis like 📚 for lessons, ✍️ for examples, 💡 for tips, ⭐ for highlights. Never repeat examples or rules taught previously."},
             {"role": "user", "content": prompt}
         ]
 
@@ -59,9 +69,10 @@ LESSON: [your lesson body here]"""
             print(f"Error parsing lesson: {e}")
             return None
 
-    async def generate_test(self, used_topics: list) -> dict:
-        """Generate an interactive test with reactions"""
+    async def generate_test(self, used_topics: list, history_summary: str = "") -> dict:
+        """Generate an interactive test with reactions and history context"""
         topics_str = ", ".join(used_topics) if used_topics else "none"
+        history_block = f"\nDO NOT repeat questions or concepts from previous lessons:\n{history_summary}" if history_summary else ""
 
         prompt = f"""You are an expert English teacher creating interactive tests for a Telegram channel.
 
@@ -71,7 +82,7 @@ Create a fill-in-the-blank English test question. The format should be:
 3. Two incorrect options that are plausible but wrong
 4. A brief explanation of why the correct answer is right
 
-IMPORTANT: Do NOT repeat topics from: {topics_str}
+IMPORTANT: Do NOT repeat topics from: {topics_str}{history_block}
 IMPORTANT: The entire test MUST be in 100% English. Do NOT include translations, Chinese characters, or any other languages under any circumstances.
 IMPORTANT: Use emojis tastefully throughout your response to make it visually engaging for Telegram users. Use relevant emojis like 🧪 ❓ ✅ 💬 📖 🎯 🧠 and others that fit naturally.
 
@@ -106,12 +117,14 @@ Make it educational and suitable for intermediate English learners. Use emojis t
             print(f"Error parsing test: {e}")
             return None
 
-    async def generate_batch_tests(self, topic: str) -> list[dict]:
-        """Generate a batch of 10 tests for a specific topic"""
+    async def generate_batch_tests(self, topic: str, history_summary: str = "") -> list[dict]:
+        """Generate a batch of 10 tests for a specific topic with memory context"""
+        history_block = f"\nDO NOT repeat questions or concepts from previous lessons:\n{history_summary}" if history_summary else ""
+
         prompt = f"""You are an expert English teacher creating interactive tests for a Telegram channel.
 
 Generate exactly 10 fill-in-the-blank English test questions about the following topic:
-"{topic}"
+"{topic}"{history_block}
 
 IMPORTANT: The entire content MUST be in 100% English. Do NOT include translations, Chinese characters, or any other languages under any circumstances.
 IMPORTANT: Output ONLY valid JSON, nothing else. The JSON should be an array of exactly 10 objects.

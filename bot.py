@@ -198,7 +198,8 @@ class EnglishBot:
             selected_topic = selected['topic']
             selected_tags = selected['tags']
             
-            lesson_data = await self.ai_client.generate_lesson(selected_topic)
+            history_summary = self.topic_history.get_history_summary(limit=15)
+            lesson_data = await self.ai_client.generate_lesson(selected_topic, history_summary=history_summary)
             if not lesson_data:
                 logger.error("❌ Failed to generate lesson data. Skipping post.")
                 return
@@ -214,9 +215,9 @@ class EnglishBot:
                 parse_mode='HTML'
             )
             if result.get('ok'):
-                self.topic_history.add_topic(lesson_data['topic'])
+                self.topic_history.add_lesson_entry(lesson_data['topic'], lesson_data['content'])
                 self.post_count += 1
-                logger.info("✅ Lesson sent: %s (Post #%d)", lesson_data['topic'], self.post_count)
+                logger.info("✅ Lesson sent & saved to history: %s (Post #%d)", lesson_data['topic'], self.post_count)
             else:
                 logger.error("❌ Failed to send lesson: %s", result)
 
@@ -229,7 +230,8 @@ class EnglishBot:
             logger.info("🧪 Generating test...")
 
             used_topics = self.topic_history.get_used_topics()
-            test_data = await self.ai_client.generate_test(used_topics)
+            history_summary = self.topic_history.get_history_summary(limit=15)
+            test_data = await self.ai_client.generate_test(used_topics, history_summary=history_summary)
             if not test_data:
                 logger.error("❌ Failed to generate test data. Skipping post.")
                 return
@@ -256,7 +258,7 @@ class EnglishBot:
                 if result.get('ok'):
                     self.test_message_id = result['result']['message_id']
                     self.test_count += 1
-                    self.topic_history.add_topic(f"Test: {test_data['question'][:30]}")
+                    self.topic_history.add_test_entry("Test", test_data.get('question', ''), test_data.get('answer', ''))
                     logger.info("✅ Poll Test sent (Test #%d)", self.test_count)
                 else:
                     logger.error("❌ Failed to send poll test: %s", result)
@@ -303,7 +305,7 @@ class EnglishBot:
                 if result.get('ok'):
                     self.test_message_id = result['result']['message_id']
                     self.test_count += 1
-                    self.topic_history.add_topic(f"Test: {test_data['question'][:30]}")
+                    self.topic_history.add_test_entry("Test", test_data.get('question', ''), test_data.get('answer', ''))
                     logger.info("✅ Test sent (Test #%d)", self.test_count)
                 else:
                     logger.error("❌ Failed to send test: %s", result)
@@ -316,7 +318,8 @@ class EnglishBot:
         try:
             logger.info(f"🧪 Generating 10 tests for topic: {topic} (Mode: {mode})...")
             
-            tests = await self.ai_client.generate_batch_tests(topic)
+            history_summary = self.topic_history.get_history_summary(limit=15)
+            tests = await self.ai_client.generate_batch_tests(topic, history_summary=history_summary)
             if not tests or not isinstance(tests, list):
                 logger.error("❌ Failed to generate batch tests data.")
                 return
@@ -384,6 +387,7 @@ class EnglishBot:
                 
                 if result.get('ok'):
                     self.test_count += 1
+                    self.topic_history.add_test_entry(topic, test_data.get('question', ''), test_data.get('answer', ''))
                 else:
                     logger.error("❌ Failed to send batch test: %s", result)
                     
@@ -640,6 +644,7 @@ Use /help for commands. 📋"""
 📚 Posts sent: <b>{self.post_count}</b>
 🧪 Tests sent: <b>{self.test_count}</b>
 📝 Topics in history: <b>{self.topic_history.get_history_count()}</b>
+🧠 Detailed lesson records: <b>{self.topic_history.get_detailed_history_count()}</b>
 
 ⏰ Next posts scheduled automatically.
 🟢 Bot is running smoothly!"""
