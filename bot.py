@@ -21,7 +21,7 @@ if sys.platform == 'win32':
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 from config import (
-    BOT_TOKEN, CHANNEL_ID, POST_INTERVAL_HOURS,
+    BOT_TOKEN, CHANNEL_ID, POST_INTERVAL_HOURS, TEST_INTERVAL_HOURS,
     TOPICS_DATA, GENERAL_TAGS
 )
 import random
@@ -38,15 +38,15 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramAPI:
-    """Simple Telegram Bot API wrapper using HTTP requests"""
+    """Simple Telegram Bot API wrapper using HTTP requests with retries and timeout protection"""
 
     def __init__(self, token: str):
         self.token = token
         self.base_url = f"https://api.telegram.org/bot{token}"
         self.offset = 0
 
-    async def _make_request(self, method: str, data: dict = None) -> dict:
-        """Make HTTP request to Telegram API"""
+    async def _make_request(self, method: str, data: dict = None, timeout: int = 35, retries: int = 3) -> dict:
+        """Make HTTP request to Telegram API with automatic retries for timeouts/network errors"""
         url = f"{self.base_url}/{method}"
 
         if data:
@@ -56,20 +56,33 @@ class TelegramAPI:
             request = urllib.request.Request(url)
 
         def do_req():
-            try:
-                with urllib.request.urlopen(request, timeout=10) as response:
-                    return json.loads(response.read().decode('utf-8'))
-            except urllib.error.HTTPError as e:
-                error_msg = e.read().decode()
-                if method == 'answerCallbackQuery' and 'query is too old' in error_msg:
-                    return {'ok': False, 'error': 'query too old'}
-                if method == 'editMessageReplyMarkup' and ('message is not modified' in error_msg or 'message to edit not found' in error_msg):
-                    return {'ok': False, 'error': 'edit skipped'}
-                logger.error(f"HTTP Error {e.code}: {error_msg}")
-                return {'ok': False, 'error': str(e)}
-            except Exception as e:
-                logger.error(f"Request error: {e}")
-                return {'ok': False, 'error': str(e)}
+            for attempt in range(1, retries + 1):
+                try:
+                    with urllib.request.urlopen(request, timeout=timeout) as response:
+                        return json.loads(response.read().decode('utf-8'))
+                except urllib.error.HTTPError as e:
+                    error_msg = e.read().decode()
+                    if method == 'answerCallbackQuery' and 'query is too old' in error_msg:
+                        return {'ok': False, 'error': 'query too old'}
+                    if method == 'editMessageReplyMarkup' and ('message is not modified' in error_msg or 'message to edit not found' in error_msg):
+                        return {'ok': False, 'error': 'edit skipped'}
+                    if e.code in (429, 500, 502, 503, 504) and attempt < retries:
+                        wait_sec = attempt * 2
+                        logger.warning(f"Telegram HTTP {e.code} on {method}. Retrying in {wait_sec}s (attempt {attempt}/{retries})...")
+                        time.sleep(wait_sec)
+                        continue
+                    logger.error(f"HTTP Error {e.code}: {error_msg}")
+                    return {'ok': False, 'error': str(e)}
+                except Exception as e:
+                    err_str = str(e)
+                    if attempt < retries and any(k in err_str.lower() for k in ['timed out', 'timeout', 'reset', 'disconnected', 'temporary']):
+                        wait_sec = attempt * 2
+                        logger.warning(f"Telegram {method} attempt {attempt} failed ({e}). Retrying in {wait_sec}s...")
+                        time.sleep(wait_sec)
+                        continue
+                    logger.error(f"Request error: {e}")
+                    return {'ok': False, 'error': str(e)}
+            return {'ok': False, 'error': 'all retries failed'}
         
         return await asyncio.to_thread(do_req)
 
@@ -85,7 +98,7 @@ class TelegramAPI:
         if reply_markup:
             data['reply_markup'] = reply_markup
 
-        return await self._make_request('sendMessage', data)
+        return await self._make_request('sendMessage', data, timeout=35, retries=3)
 
     async def get_updates(self, offset: int = None, limit: int = 100) -> dict:
         """Get updates from Telegram"""
@@ -93,7 +106,7 @@ class TelegramAPI:
         if offset:
             data['offset'] = offset
 
-        return await self._make_request('getUpdates', data)
+        return await self._make_request('getUpdates', data, timeout=15, retries=1)
 
     async def answer_callback_query(self, callback_query_id: str, text: str = None, show_alert: bool = False) -> dict:
         """Answer a callback query"""
@@ -103,7 +116,7 @@ class TelegramAPI:
         if show_alert:
             data['show_alert'] = True
 
-        return await self._make_request('answerCallbackQuery', data)
+        return await self._make_request('answerCallbackQuery', data, timeout=15, retries=2)
 
     async def edit_message_reply_markup(self, chat_id: str, message_id: int, reply_markup: dict = None) -> dict:
         """Edit the inline keyboard of a message"""
@@ -116,7 +129,7 @@ class TelegramAPI:
         else:
             data['reply_markup'] = {'inline_keyboard': []}
             
-        return await self._make_request('editMessageReplyMarkup', data)
+        return await self._make_request('editMessageReplyMarkup', data, timeout=20, retries=2)
 
     async def get_chat_member(self, chat_id: str, user_id: int) -> dict:
         """Get information about a member of a chat"""
@@ -124,8 +137,7 @@ class TelegramAPI:
             'chat_id': chat_id,
             'user_id': user_id
         }
-        return await self._make_request('getChatMember', data)
-
+        return await self._make_request('getChatMember', data, timeout=20, retries=2)
 
     async def send_poll(self, chat_id: str, question: str, options: list, type: str = 'quiz', correct_option_id: int = 0, explanation: str = None, explanation_parse_mode: str = 'HTML') -> dict:
         """Send a native Telegram poll/quiz"""
@@ -140,7 +152,7 @@ class TelegramAPI:
             data['explanation'] = explanation[:200] # max 200 chars
             data['explanation_parse_mode'] = explanation_parse_mode
             
-        return await self._make_request('sendPoll', data)
+        return await self._make_request('sendPoll', data, timeout=35, retries=3)
 
 class EnglishBot:
     def __init__(self):
@@ -170,8 +182,16 @@ class EnglishBot:
             replace_existing=True
         )
 
+        self.scheduler.add_job(
+            self.send_test,
+            'interval',
+            hours=TEST_INTERVAL_HOURS,
+            id='test_job',
+            replace_existing=True
+        )
+
         self.scheduler.start()
-        logger.info("🚀 Scheduler started — lessons every %dh", POST_INTERVAL_HOURS)
+        logger.info("🚀 Scheduler started — lessons every %dh, tests every %dh", POST_INTERVAL_HOURS, TEST_INTERVAL_HOURS)
 
     async def send_lesson(self):
         """Generate and send a lesson to the channel"""
@@ -722,6 +742,10 @@ Use /help for commands. 📋"""
 async def main():
     """Main function to run the bot"""
     logger.info("🌟 Starting English Teaching Bot...")
+
+    if not BOT_TOKEN or BOT_TOKEN == "your_bot_token_here":
+        logger.error("❌ BOT_TOKEN is not configured! Please check your .env file.")
+        return
 
     bot = EnglishBot()
 

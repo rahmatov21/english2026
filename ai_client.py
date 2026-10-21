@@ -58,7 +58,8 @@ LESSON: [your lesson body here]"""
 
         content = await asyncio.to_thread(self._get_ai_response, messages)
         if not content:
-            return None
+            print("AI generation failed for lesson; using fallback lesson.")
+            return self._get_fallback_lesson()
             
         try:
             parsed = self._parse_lesson(content)
@@ -66,8 +67,8 @@ LESSON: [your lesson body here]"""
             parsed['topic'] = topic
             return parsed
         except Exception as e:
-            print(f"Error parsing lesson: {e}")
-            return None
+            print(f"Error parsing lesson: {e}; using fallback lesson.")
+            return self._get_fallback_lesson()
 
     async def generate_test(self, used_topics: list, history_summary: str = "") -> dict:
         """Generate an interactive test with reactions and history context"""
@@ -109,13 +110,14 @@ Make it educational and suitable for intermediate English learners. Use emojis t
 
         content = await asyncio.to_thread(self._get_ai_response, messages)
         if not content:
-            return None
+            print("AI generation failed for test; using fallback test.")
+            return self._get_fallback_test()
 
         try:
             return self._parse_test(content)
         except Exception as e:
-            print(f"Error parsing test: {e}")
-            return None
+            print(f"Error parsing test: {e}; using fallback test.")
+            return self._get_fallback_test()
 
     async def generate_batch_tests(self, topic: str, history_summary: str = "") -> list[dict]:
         """Generate a batch of 10 tests for a specific topic with memory context"""
@@ -247,7 +249,7 @@ Format your response EXACTLY as this JSON array:
         data = json.dumps(payload).encode('utf-8')
         request = urllib.request.Request(url, data=data, headers=headers)
 
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=45) as response:
             return json.loads(response.read().decode('utf-8'))
 
     def _parse_lesson(self, content: str) -> dict:
