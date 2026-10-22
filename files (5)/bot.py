@@ -84,13 +84,14 @@ def make_exchange():
         "apiKey": API_KEY,
         "secret": API_SECRET,
         "enableRateLimit": True,
-        "timeout": 20000,
+        "timeout": 35000,
         "options": {
             "adjustForTimeDifference": True,
             "recvWindow": 60000,
+            "defaultType": "spot",
         },
     })
-    ex.load_markets()
+    ex.load_markets(params={"type": "spot"})
     log.info("Successfully connected to MEXC! (%d markets verified)", len(ex.markets))
     for sym in SYMBOLS:
         if sym not in ex.markets:
