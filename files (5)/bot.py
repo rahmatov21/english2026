@@ -74,6 +74,7 @@ signal.signal(signal.SIGTERM, handle_shutdown)
 
 
 def make_exchange():
+    log.info("Connecting to MEXC API and loading markets (%s)...", ", ".join(SYMBOLS))
     ex = ccxt.mexc({
         "apiKey": API_KEY,
         "secret": API_SECRET,
@@ -85,6 +86,7 @@ def make_exchange():
         },
     })
     ex.load_markets()
+    log.info("Successfully connected to MEXC! (%d markets verified)", len(ex.markets))
     for sym in SYMBOLS:
         if sym not in ex.markets:
             raise SystemExit(f"Symbol {sym} not found on MEXC Spot. Please verify SYMBOLS in .env")
@@ -451,6 +453,7 @@ def process_all_pairs(ex, st):
 # -------------------------- Real-Time Heartbeat Loop -----------------------
 def run():
     global RUNNING
+    log.info("Initializing Halal Auto-Trader bot...")
     ex = make_exchange()
     if MODE == "live" and not (API_KEY and API_SECRET):
         raise SystemExit("MODE=live requires MEXC_API_KEY and MEXC_API_SECRET in your .env file")
