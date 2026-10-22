@@ -28,6 +28,7 @@ import random
 from ai_client import AIClient
 from topic_history import TopicHistory
 from post_formatter import PostFormatter
+from portfolio_viewer import format_portfolio_message, save_subscriber_chat_id
 
 logging.basicConfig(
     level=logging.INFO,
@@ -130,6 +131,18 @@ class TelegramAPI:
             data['reply_markup'] = {'inline_keyboard': []}
             
         return await self._make_request('editMessageReplyMarkup', data, timeout=20, retries=2)
+
+    async def edit_message_text(self, chat_id: str, message_id: int, text: str, parse_mode: str = 'HTML', reply_markup: dict = None) -> dict:
+        """Edit the text and keyboard of an existing message"""
+        data = {
+            'chat_id': chat_id,
+            'message_id': message_id,
+            'text': text,
+            'parse_mode': parse_mode
+        }
+        if reply_markup is not None:
+            data['reply_markup'] = reply_markup
+        return await self._make_request('editMessageText', data, timeout=25, retries=2)
 
     async def get_chat_member(self, chat_id: str, user_id: int) -> dict:
         """Get information about a member of a chat"""
@@ -479,7 +492,21 @@ class EnglishBot:
             query_id = callback_query['id']
             data = callback_query.get('data', '')
 
-            if data.startswith("testmode_"):
+            if data == "refresh_portfolio":
+                chat_id = callback_query['message']['chat']['id']
+                msg_id = callback_query['message']['message_id']
+                save_subscriber_chat_id(chat_id)
+                new_text, new_kb = format_portfolio_message()
+                await self.telegram.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=msg_id,
+                    text=new_text,
+                    parse_mode='HTML',
+                    reply_markup=new_kb
+                )
+                await self.telegram.answer_callback_query(query_id, "✅ Portfolio updated with live prices!")
+                return
+            elif data.startswith("testmode_"):
                 mode = data.split("_")[1]
                 chat_id = callback_query['message']['chat']['id']
                 self.testtime_state[chat_id] = {'step': 'topic', 'mode': mode}
@@ -640,8 +667,8 @@ Use /help for commands. 📋"""
                 help_text = """📋 <b>Bot Commands</b>
 
 /start — 🌟 Welcome message
-/help — 📋 This message
-/status — 📊 Bot statistics
+/portfolio — 📊 View crypto trading portfolio & P&L
+/status — 📈 Bot statistics
 /lesson — 📚 Get a lesson now
 /test — 🧪 Get a test now
 /testtime — 📚 Generate 10 tests for a topic
@@ -651,12 +678,23 @@ Use /help for commands. 📋"""
 ⏰ <b>Schedule</b>
 📚 • Lessons: every 4 hours (6/day)
 🧪 • Tests: every 12 hours (2/day)
+📊 • Trading: real-time 1h LuxAlgo signals
 
 💡 <b>Tips</b>
 💾 • Save posts for later review
 👆 • Participate in tests
-🔄 • Topics never repeat!"""
+📊 • Use /portfolio to check real-time crypto positions!"""
                 await self.telegram.send_message(chat_id, help_text, parse_mode='HTML')
+
+            elif text in ('/portfolio', '/trade', '/crypto'):
+                save_subscriber_chat_id(chat_id)
+                msg_text, reply_markup = format_portfolio_message()
+                await self.telegram.send_message(
+                    chat_id,
+                    msg_text,
+                    parse_mode='HTML',
+                    reply_markup=reply_markup
+                )
 
             elif text == '/status':
                 status = f"""📊 <b>Bot Status</b>

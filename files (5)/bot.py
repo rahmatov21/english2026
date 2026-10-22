@@ -29,6 +29,11 @@ from dotenv import load_dotenv
 
 from luxalgo import find_signals
 
+# Ensure root directory is importable for portfolio_viewer
+parent_dir = str(Path(__file__).resolve().parent.parent)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
 load_dotenv()
 
 # ------------------------------- Configuration -----------------------------
@@ -306,6 +311,24 @@ def execute_buy(ex, st, symbol, signal_price, conf_bar_idx, piv_price):
              symbol, next_tier, bought_tokens, base_cur, filled_price, pos["tokens"], avg_entry)
     save_state(st)
 
+    try:
+        from portfolio_viewer import send_telegram_trade_alert
+        bot_tok = os.getenv("BOT_TOKEN", "")
+        send_telegram_trade_alert(
+            bot_token=bot_tok,
+            message=(
+                f"🟢 <b>[BUY EXECUTED] {symbol}</b>\n\n"
+                f"🎯 <b>Tier:</b> {next_tier}/{MAX_BUY_TIERS}\n"
+                f"💰 <b>Spent:</b> ${spend:.2f} USDT\n"
+                f"📦 <b>Tokens:</b> +{bought_tokens:.4f} {base_cur}\n"
+                f"💵 <b>Price:</b> <code>${filled_price:.5f}</code>\n"
+                f"📥 <b>Avg Entry:</b> <code>${avg_entry:.5f}</code>\n"
+                f"💼 <b>Mode:</b> <code>{MODE.upper()}</code>"
+            )
+        )
+    except Exception as e:
+        log.debug("Telegram alert error: %s", e)
+
 
 def execute_sell(ex, st, symbol, signal_price, conf_bar_idx, piv_price):
     pos = st["pairs"][symbol]
@@ -393,6 +416,25 @@ def execute_sell(ex, st, symbol, signal_price, conf_bar_idx, piv_price):
         pos["buy_tier"] = min(pos["buy_tier"], 1)
 
     save_state(st)
+
+    try:
+        from portfolio_viewer import send_telegram_trade_alert
+        bot_tok = os.getenv("BOT_TOKEN", "")
+        pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
+        send_telegram_trade_alert(
+            bot_token=bot_tok,
+            message=(
+                f"{pnl_emoji} <b>[SELL EXECUTED] {symbol}</b>\n\n"
+                f"🎯 <b>Action:</b> {action_name}\n"
+                f"📦 <b>Sold:</b> {sell_amount:.4f} {base_cur}\n"
+                f"💵 <b>Exit Price:</b> <code>${filled_price:.5f}</code> (Avg Entry: <code>${avg_entry:.5f}</code>)\n"
+                f"📊 <b>Trade P&L:</b> <b>{pnl_pct:+.2f}%</b> ({pnl_usdt:+.2f} USDT)\n"
+                f"📈 <b>Total Realized P&L:</b> <b>${st.get('total_pnl_usdt', 0.0):+.2f} USDT</b>\n"
+                f"💼 <b>Mode:</b> <code>{MODE.upper()}</code>"
+            )
+        )
+    except Exception as e:
+        log.debug("Telegram alert error: %s", e)
 
 
 # -------------------------- Concurrent Processing --------------------------
@@ -506,6 +548,11 @@ def run():
                 try:
                     # Sync real-time portfolio & market prices
                     nw, free_cash, px_now = sync_wallet_portfolio(ex, st)
+                    st["last_net_worth"] = nw
+                    st["last_free_usdt"] = free_cash
+                    st["last_prices"] = px_now
+                    st["last_update"] = int(time.time())
+                    st["mode"] = MODE
                     save_state(st)
 
                     status_parts = []
