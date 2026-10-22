@@ -12,6 +12,9 @@ ENV/
 
 # Bot specific
 topic_history.json
+bot.log
+*.log
+state_*.json
 
 # IDE
 .vscode/
