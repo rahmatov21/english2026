@@ -1,6 +1,7 @@
 """
-Post Formatter - Formats lessons and tests for Telegram
-Uses HTML parsing mode with emoji-rich, premium styling
+Post Formatter - Premium Telegram Message Styler
+Produces visually engaging, beautifully formatted HTML posts with dividers,
+proper markdown-to-HTML conversion, and clean hashtags.
 """
 
 import html
@@ -10,61 +11,84 @@ import re
 class PostFormatter:
     @staticmethod
     def escape_html(text: str) -> str:
-        """Escape HTML special characters"""
-        return html.escape(text)
+        """Escape HTML special characters for Telegram without escaping quotes/apostrophes"""
+        if not text:
+            return ""
+        return html.escape(text, quote=False)
 
     @staticmethod
     def markdown_to_html(text: str) -> str:
-        """Convert basic markdown to Telegram HTML"""
-        # Bold: **text**
+        """Convert standard markdown syntax into Telegram HTML tags"""
+        if not text:
+            return ""
+
+        # Code blocks: ```code```
+        text = re.sub(r'```(.*?)```', r'<pre>\1</pre>', text, flags=re.DOTALL)
+
+        # Inline code: `code`
+        text = re.sub(r'`([^`\n]+)`', r'<code>\1</code>', text)
+
+        # Bold: **text** or __text__
         text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text, flags=re.DOTALL)
-        # Bold: __text__
         text = re.sub(r'__(.+?)__', r'<b>\1</b>', text, flags=re.DOTALL)
-        # Italic: *text* (must not start with space to avoid bullet points)
-        text = re.sub(r'(?<!\*)\*([^\*\s][^\*]*?)\*(?!\*)', r'<i>\1</i>', text, flags=re.DOTALL)
-        # Italic: _text_
-        text = re.sub(r'(?<!_)_([^\_\s][^\_]*?)_(?!_)', r'<i>\1</i>', text, flags=re.DOTALL)
+
+        # Italic: _text_ (ensure not surrounded by alphanumeric characters)
+        text = re.sub(r'(?<!\w)_([^\_\n]+?)_(?!\w)', r'<i>\1</i>', text)
+
+        # Single asterisk italic: *text* (must not conflict with bullet points)
+        text = re.sub(r'(?<!\*)\*([^\*\s\n][^\*\n]*?)\*(?!\*)', r'<i>\1</i>', text)
+
         return text
 
     @staticmethod
     def _clean_hashtag(text: str) -> str:
-        """Create a clean hashtag: no emojis, no special chars, camelCase"""
-        # Remove all non-alphanumeric characters except spaces
+        """Create a clean, camelCase hashtag without emojis or punctuation"""
         cleaned = re.sub(r'[^\w\s]', '', text)
-        # Remove emojis that might have slipped through
         cleaned = re.sub(r'[^\x00-\x7F]+', '', cleaned)
-        # Split into words and capitalize each
         words = cleaned.strip().split()
         if not words:
-            return "English"
-        # CamelCase
+            return "LearnEnglish"
         return words[0].capitalize() + ''.join(w.capitalize() for w in words[1:])
 
     @staticmethod
     def format_lesson(lesson_data: dict) -> str:
-        """Format a lesson post for Telegram with emoji-rich, premium styling"""
+        """Format an educational lesson with premium visual hierarchy and hashtags"""
         topic = lesson_data.get('topic', '📚 English Lesson')
         content = lesson_data.get('content', '')
         specific_tags = lesson_data.get('tags', [])
-        general_tags = lesson_data.get('general_tags', ['#LearnEnglish', '#EnglishLesson'])
+        general_tags = lesson_data.get('general_tags', ['#LearnEnglish', '#EnglishTips'])
 
-        topic = PostFormatter.escape_html(topic)
-        content = PostFormatter.escape_html(content)
-        
-        topic = PostFormatter.markdown_to_html(topic)
-        content = PostFormatter.markdown_to_html(content)
-        
-        if not specific_tags:
-            specific_tags = ["#" + PostFormatter._clean_hashtag(topic)]
-            
-        formatted = f"""✨ <b>{topic}</b> ✨
+        # Prepare hashtags
+        all_tags = []
+        if specific_tags:
+            all_tags.extend(specific_tags[:3])
+        else:
+            all_tags.append("#" + PostFormatter._clean_hashtag(topic))
 
+        if general_tags:
+            for gt in general_tags[:3]:
+                if gt not in all_tags:
+                    all_tags.append(gt)
 
-{content}
+        hashtags_str = " ".join(all_tags)
 
-___________________________________
-💡 <i>Save this post so you don't forget it!</i>
-⏰ <i>Stay tuned!</i>
+        # Convert markdown styling
+        topic_escaped = PostFormatter.escape_html(topic)
+        topic_formatted = PostFormatter.markdown_to_html(topic_escaped)
+
+        content_escaped = PostFormatter.escape_html(content)
+        content_formatted = PostFormatter.markdown_to_html(content_escaped)
+
+        formatted = f"""🌟 <b>{topic_formatted}</b> 🌟
+━━━━━━━━━━━━━━━━━━━━━
+
+{content_formatted}
+
+━━━━━━━━━━━━━━━━━━━━━
+💡 <i>Save this post so you don't lose it!</i>
+⏰ <i>New bite-sized lessons every 4 hours!</i>
+
+🏷️ {hashtags_str}
 
 ✅ <b>Follow us:</b>
 |<a href="https://t.me/+QxanmBn5JImTJfQe">Telegram</a> | <a href="https://instagram.com/englishnativetv?igshid=ZDdkNTZiNTM=">Instagram</a> | <a href="https://m.youtube.com/@englishnativetv/videos">YouTube</a>"""
@@ -73,87 +97,84 @@ ___________________________________
 
     @staticmethod
     def format_test(test_data: dict) -> str:
-        """Format a test post for Telegram with emoji-rich styling"""
+        """Format an interactive quiz question for Telegram"""
         question = test_data.get('question', 'Do you .... here? 🤔')
-        answer = test_data.get('answer', 'work')
-        explanation = test_data.get('explanation', '')
+        category = test_data.get('category', 'English Quiz')
 
-        question = PostFormatter.escape_html(question)
-        answer = PostFormatter.escape_html(answer)
-        explanation = PostFormatter.escape_html(explanation)
+        question_escaped = PostFormatter.escape_html(question)
+        question_formatted = PostFormatter.markdown_to_html(question_escaped)
 
-        question = PostFormatter.markdown_to_html(question)
-        answer = PostFormatter.markdown_to_html(answer)
-        explanation = PostFormatter.markdown_to_html(explanation)
+        formatted = f"""🧪 <b>English Quiz Time!</b> 🎯
+━━━━━━━━━━━━━━━━━━━━━
 
-        formatted = f"""🧪 <b>English Test Time!</b>
+❓ {question_formatted}
 
-❓ {question}
+━━━━━━━━━━━━━━━━━━━━━
+👇 <b>Tap your answer below:</b>
 
-━━━━━━━━━━━━━━━━━━━━━━━
-👇 <b>Choose your answer using the buttons below.</b>
+🏷️ #EnglishQuiz #TestYourEnglish #LearnEnglish
 
-✅Follow us:
-
+✅ <b>Follow us:</b>
 |<a href="https://t.me/+QxanmBn5JImTJfQe">Telegram</a> | <a href="https://instagram.com/englishnativetv?igshid=ZDdkNTZiNTM=">Instagram</a> | <a href="https://m.youtube.com/@englishnativetv/videos">YouTube</a>"""
 
         return formatted
 
     @staticmethod
     def format_answer_reveal(test_data: dict) -> str:
-        """Format the answer reveal message with emoji-rich styling"""
+        """Format the answer reveal and explanation message"""
         question = test_data.get('question', '')
         answer = test_data.get('answer', '')
         explanation = test_data.get('explanation', '')
 
-        question = PostFormatter.escape_html(question)
-        answer = PostFormatter.escape_html(answer)
-        explanation = PostFormatter.escape_html(explanation)
+        question_escaped = PostFormatter.escape_html(question)
+        answer_escaped = PostFormatter.escape_html(answer)
+        explanation_escaped = PostFormatter.escape_html(explanation)
 
-        question = PostFormatter.markdown_to_html(question)
-        answer = PostFormatter.markdown_to_html(answer)
-        explanation = PostFormatter.markdown_to_html(explanation)
+        explanation_formatted = PostFormatter.markdown_to_html(explanation_escaped)
 
-        # Replace the blank with the answer
-        answered_question = question.replace('....', f'<b>{answer}</b>')
-        answered_question = answered_question.replace('___', f'<b>{answer}</b>')
-        answered_question = answered_question.replace('...', f'<b>{answer}</b>')
+        # Replace blank markers with the bold answer
+        answered_question = question_escaped
+        for blank in ['....', '___', '...']:
+            if blank in answered_question:
+                answered_question = answered_question.replace(blank, f'<b><u>{answer_escaped}</u></b>')
+                break
 
-        formatted = f"""✅ <b>Answer Revealed!</b>
+        formatted = f"""✅ <b>Answer Revealed!</b> 🎉
+━━━━━━━━━━━━━━━━━━━━━
 
 📝 {answered_question}
 
 💡 <b>Explanation:</b>
-{explanation}
+{explanation_formatted}
 
-━━━━━━━━━━━━━━━━━━━━━━━
-🤔 <i>How did you do? Keep practicing daily! 📚</i>
+━━━━━━━━━━━━━━━━━━━━━
+🤔 <i>Did you get it right? Keep practicing daily! 📚</i>
 
-✅Follow us:
+🏷️ #QuizAnswer #EnglishGrammar #DailyEnglish
 
+✅ <b>Follow us:</b>
 |<a href="https://t.me/+QxanmBn5JImTJfQe">Telegram</a> | <a href="https://instagram.com/englishnativetv?igshid=ZDdkNTZiNTM=">Instagram</a> | <a href="https://m.youtube.com/@englishnativetv/videos">YouTube</a>"""
 
         return formatted
 
     @staticmethod
     def format_welcome() -> str:
-        """Format welcome message — clean, emoji-rich"""
-        return """🌟 <b>Improve Your English</b> 🌟
+        """Format welcome message for new users"""
+        return """🌟 <b>Welcome to Improve Your English!</b> 🌟
 
-🤖 Your AI English teacher bot is now active!
+🤖 Your automated AI English teacher is online and ready!
 
 📋 <b>What you get:</b>
-📚 • 6 lessons daily — every 4 hours
-🧪 • 2 tests daily — every 12 hours
-🔄 • Unique topics — no repeats!
+📚 • 6 high-impact lessons daily (every 4 hours)
+🧪 • 2 interactive quizzes daily (every 12 hours)
+🧠 • Advanced memory tracking — zero repeating topics or words!
+🎯 • Practical vocabulary, phrasal verbs, idioms & grammar
 
-🚀 <b>How to use:</b>
-📖 • Read the lessons
-👆 • Tap test buttons to answer
-✅ • Check back for answer reveals
+🚀 <b>Commands you can use:</b>
+/lesson — Generate an instant lesson
+/test — Generate an instant quiz
+/status — View detailed memory & posting statistics
+/portfolio — View live crypto trading positions & P&L
 
-🎯 Let's improve your English together!
-
-✅Follow us:
-
+✅ <b>Follow us:</b>
 |<a href="https://t.me/+QxanmBn5JImTJfQe">Telegram</a> | <a href="https://instagram.com/englishnativetv?igshid=ZDdkNTZiNTM=">Instagram</a> | <a href="https://m.youtube.com/@englishnativetv/videos">YouTube</a>"""

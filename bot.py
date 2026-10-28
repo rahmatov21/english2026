@@ -15,14 +15,24 @@ import time
 from datetime import datetime
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-# Fix Windows console encoding
+# Fix Windows console encoding safely
 if sys.platform == 'win32':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+    if hasattr(sys.stdout, 'buffer') and not getattr(sys.stdout, '_is_utf8_wrapped', False):
+        try:
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+            sys.stdout._is_utf8_wrapped = True
+        except Exception:
+            pass
+    if hasattr(sys.stderr, 'buffer') and not getattr(sys.stderr, '_is_utf8_wrapped', False):
+        try:
+            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+            sys.stderr._is_utf8_wrapped = True
+        except Exception:
+            pass
 
 from config import (
     BOT_TOKEN, CHANNEL_ID, POST_INTERVAL_HOURS, TEST_INTERVAL_HOURS,
-    TOPICS_DATA, GENERAL_TAGS
+    TOPICS_DATA, GENERAL_TAGS, CATEGORY_ROTATION
 )
 import random
 from ai_client import AIClient
@@ -183,6 +193,7 @@ class EnglishBot:
         self.waiting_for_model = {}
         self.active_tests = {}
         self.subscriber_cache = {}
+        self.category_idx = 0
         self.running = True
 
     async def start_scheduler(self):
@@ -206,40 +217,80 @@ class EnglishBot:
         self.scheduler.start()
         logger.info("🚀 Scheduler started — lessons every %dh, tests every %dh", POST_INTERVAL_HOURS, TEST_INTERVAL_HOURS)
 
-    async def send_lesson(self):
-        """Generate and send a lesson to the channel"""
-        try:
-            logger.info("📚 Generating lesson...")
+    def _select_next_topic(self) -> dict:
+        """
+        Intelligently selects the next topic using category rotation and cooldown memory.
+        Ensures diverse skills are covered throughout the day and no topic repeats prematurely.
+        """
+        total_cats = len(CATEGORY_ROTATION)
 
-            used_topics = self.topic_history.get_used_topics()
-            
-            # Find an unused topic
-            available_topics = []
-            for category, data in TOPICS_DATA.items():
-                for topic in data['topics']:
-                    if topic.lower().strip() not in [t.lower() for t in used_topics]:
-                        available_topics.append({'category': category, 'topic': topic, 'tags': data['tags']})
-            
-            if not available_topics:
-                logger.warning("All topics used! Resetting topic history and starting over.")
-                self.topic_history.reset_history()
-                for category, data in TOPICS_DATA.items():
-                    for topic in data['topics']:
-                        available_topics.append({'category': category, 'topic': topic, 'tags': data['tags']})
-            
-            selected = random.choice(available_topics)
-            selected_topic = selected['topic']
-            selected_tags = selected['tags']
-            
-            history_summary = self.topic_history.get_history_summary(limit=15)
-            lesson_data = await self.ai_client.generate_lesson(selected_topic, history_summary=history_summary)
+        # Try up to total_cats to find a category with available (non-cooldown) topics
+        for offset in range(total_cats):
+            cat_idx = (self.category_idx + offset) % total_cats
+            cat_name = CATEGORY_ROTATION[cat_idx]
+            cat_data = TOPICS_DATA.get(cat_name)
+            if not cat_data:
+                continue
+
+            # Filter out topics currently in cooldown
+            eligible = [
+                t for t in cat_data["topics"]
+                if not self.topic_history.is_topic_recent(t)
+            ]
+
+            if eligible:
+                self.category_idx = cat_idx + 1
+                selected_topic = random.choice(eligible)
+                return {
+                    "category": cat_name,
+                    "topic": selected_topic,
+                    "tags": cat_data.get("tags", [])
+                }
+
+        # If all topics across all categories are in cooldown, trigger soft cooldown reset
+        logger.warning("All curriculum topics are currently in cooldown! Refreshing topic cooldown buffer...")
+        self.topic_history.reset_cooldown()
+
+        cat_name = CATEGORY_ROTATION[self.category_idx % total_cats]
+        self.category_idx += 1
+        cat_data = TOPICS_DATA[cat_name]
+        selected_topic = random.choice(cat_data["topics"])
+        return {
+            "category": cat_name,
+            "topic": selected_topic,
+            "tags": cat_data.get("tags", [])
+        }
+
+    async def send_lesson(self):
+        """Generate and send a lesson to the channel with deep anti-repetition memory"""
+        try:
+            logger.info("📚 Selecting next skill and generating lesson...")
+
+            selected = self._select_next_topic()
+            selected_category = selected["category"]
+            selected_topic = selected["topic"]
+            selected_tags = selected["tags"]
+
+            logger.info(f"🎯 Target Skill: [{selected_category}] -> '{selected_topic}'")
+
+            memory_context = self.topic_history.get_lesson_memory_context(
+                category=selected_category,
+                topic=selected_topic
+            )
+
+            lesson_data = await self.ai_client.generate_lesson(
+                topic=selected_topic,
+                category=selected_category,
+                memory_context=memory_context
+            )
+
             if not lesson_data:
                 logger.error("❌ Failed to generate lesson data. Skipping post.")
                 return
-                
+
             lesson_data['tags'] = selected_tags
             lesson_data['general_tags'] = GENERAL_TAGS
-            
+
             formatted_post = self.formatter.format_lesson(lesson_data)
 
             result = await self.telegram.send_message(
@@ -248,9 +299,14 @@ class EnglishBot:
                 parse_mode='HTML'
             )
             if result.get('ok'):
-                self.topic_history.add_lesson_entry(lesson_data['topic'], lesson_data['content'])
+                self.topic_history.add_lesson_entry(
+                    topic=lesson_data.get('topic', selected_topic),
+                    content=lesson_data.get('content', ''),
+                    category=selected_category,
+                    target_items=lesson_data.get('target_items')
+                )
                 self.post_count += 1
-                logger.info("✅ Lesson sent & saved to history: %s (Post #%d)", lesson_data['topic'], self.post_count)
+                logger.info("✅ Lesson sent & registered in deep memory: %s (Post #%d)", lesson_data.get('topic'), self.post_count)
             else:
                 logger.error("❌ Failed to send lesson: %s", result)
 
@@ -258,27 +314,26 @@ class EnglishBot:
             logger.error("❌ Error sending lesson: %s", e)
 
     async def send_test(self, mode: str = 'poll'):
-        """Generate and send a test to the channel"""
+        """Generate and send an interactive test with anti-repetition memory"""
         try:
-            logger.info("🧪 Generating test...")
+            logger.info("🧪 Generating test with memory context...")
 
-            used_topics = self.topic_history.get_used_topics()
-            history_summary = self.topic_history.get_history_summary(limit=15)
-            test_data = await self.ai_client.generate_test(used_topics, history_summary=history_summary)
+            memory_context = self.topic_history.get_test_memory_context()
+            test_data = await self.ai_client.generate_test(memory_context=memory_context)
             if not test_data:
                 logger.error("❌ Failed to generate test data. Skipping post.")
                 return
-                
+
             self.current_test = test_data
 
             if mode == 'poll':
                 options = [test_data['answer']] + test_data.get('incorrect', [])
                 random.shuffle(options)
                 correct_idx = options.index(test_data['answer'])
-                
+
                 question = test_data.get('question', 'Test Question')
                 explanation = test_data.get('explanation', '')
-                
+
                 result = await self.telegram.send_poll(
                     chat_id=self.channel_id,
                     question=question,
@@ -291,20 +346,18 @@ class EnglishBot:
                 if result.get('ok'):
                     self.test_message_id = result['result']['message_id']
                     self.test_count += 1
-                    self.topic_history.add_test_entry("Test", test_data.get('question', ''), test_data.get('answer', ''))
+                    self.topic_history.add_test_entry("Quiz", test_data.get('question', ''), test_data.get('answer', ''))
                     logger.info("✅ Poll Test sent (Test #%d)", self.test_count)
                 else:
                     logger.error("❌ Failed to send poll test: %s", result)
             else:
                 formatted_post = self.formatter.format_test(test_data)
-    
-                # Inline keyboard buttons
                 options = [test_data['answer']] + test_data.get('incorrect', [])
                 random.shuffle(options)
-                
+
                 test_id = str(uuid.uuid4())
                 correct_idx = options.index(test_data['answer'])
-                
+
                 self.active_tests[test_id] = {
                     'options': options,
                     'correct_idx': correct_idx,
@@ -312,11 +365,11 @@ class EnglishBot:
                     'counts': {i: 0 for i in range(len(options))},
                     'explanation': test_data.get('explanation', '')
                 }
-                
+
                 keyboard_buttons = []
                 for i, opt in enumerate(options):
                     keyboard_buttons.append({'text': f'{opt}'.strip(), 'callback_data': f'testvote_{test_id}_{i}'})
-    
+
                 inline_keyboard = []
                 if len(keyboard_buttons) >= 2:
                     inline_keyboard.append([keyboard_buttons[0], keyboard_buttons[1]])
@@ -324,11 +377,9 @@ class EnglishBot:
                         inline_keyboard.append(keyboard_buttons[2:])
                 else:
                     inline_keyboard.append(keyboard_buttons)
-    
-                reply_markup = {
-                    'inline_keyboard': inline_keyboard
-                }
-    
+
+                reply_markup = {'inline_keyboard': inline_keyboard}
+
                 result = await self.telegram.send_message(
                     chat_id=self.channel_id,
                     text=formatted_post,
@@ -338,7 +389,7 @@ class EnglishBot:
                 if result.get('ok'):
                     self.test_message_id = result['result']['message_id']
                     self.test_count += 1
-                    self.topic_history.add_test_entry("Test", test_data.get('question', ''), test_data.get('answer', ''))
+                    self.topic_history.add_test_entry("Quiz", test_data.get('question', ''), test_data.get('answer', ''))
                     logger.info("✅ Test sent (Test #%d)", self.test_count)
                 else:
                     logger.error("❌ Failed to send test: %s", result)
@@ -350,24 +401,24 @@ class EnglishBot:
         """Generate and send 10 tests for a given topic"""
         try:
             logger.info(f"🧪 Generating 10 tests for topic: {topic} (Mode: {mode})...")
-            
-            history_summary = self.topic_history.get_history_summary(limit=15)
-            tests = await self.ai_client.generate_batch_tests(topic, history_summary=history_summary)
+
+            memory_context = self.topic_history.get_test_memory_context()
+            tests = await self.ai_client.generate_batch_tests(topic, memory_context=memory_context)
             if not tests or not isinstance(tests, list):
                 logger.error("❌ Failed to generate batch tests data.")
                 return
-                
+
             logger.info(f"✅ Generated {len(tests)} tests. Sending to channel...")
-            
+
             for test_data in tests:
                 if mode == 'poll':
                     options = [test_data['answer']] + test_data.get('incorrect', [])
                     random.shuffle(options)
                     correct_idx = options.index(test_data['answer'])
-                    
+
                     question = test_data.get('question', 'Test Question')
                     explanation = test_data.get('explanation', '')
-                    
+
                     result = await self.telegram.send_poll(
                         chat_id=self.channel_id,
                         question=question,
@@ -379,14 +430,12 @@ class EnglishBot:
                     )
                 else:
                     formatted_post = self.formatter.format_test(test_data)
-    
-                    # Inline keyboard buttons
                     options = [test_data['answer']] + test_data.get('incorrect', [])
                     random.shuffle(options)
-                    
+
                     test_id = str(uuid.uuid4())
                     correct_idx = options.index(test_data['answer'])
-                    
+
                     self.active_tests[test_id] = {
                         'options': options,
                         'correct_idx': correct_idx,
@@ -394,11 +443,11 @@ class EnglishBot:
                         'counts': {i: 0 for i in range(len(options))},
                         'explanation': test_data.get('explanation', '')
                     }
-                    
+
                     keyboard_buttons = []
                     for i, opt in enumerate(options):
                         keyboard_buttons.append({'text': f'{opt}'.strip(), 'callback_data': f'testvote_{test_id}_{i}'})
-    
+
                     inline_keyboard = []
                     if len(keyboard_buttons) >= 2:
                         inline_keyboard.append([keyboard_buttons[0], keyboard_buttons[1]])
@@ -406,31 +455,26 @@ class EnglishBot:
                             inline_keyboard.append(keyboard_buttons[2:])
                     else:
                         inline_keyboard.append(keyboard_buttons)
-    
-                    reply_markup = {
-                        'inline_keyboard': inline_keyboard
-                    }
-    
+
+                    reply_markup = {'inline_keyboard': inline_keyboard}
+
                     result = await self.telegram.send_message(
                         chat_id=self.channel_id,
                         text=formatted_post,
                         parse_mode='HTML',
                         reply_markup=reply_markup
                     )
-                
+
                 if result.get('ok'):
                     self.test_count += 1
                     self.topic_history.add_test_entry(topic, test_data.get('question', ''), test_data.get('answer', ''))
                 else:
                     logger.error("❌ Failed to send batch test: %s", result)
-                    
-                await asyncio.sleep(5)  # Pause to avoid Telegram rate limits
 
-                # Delay of 6 seconds between sending tests to completely avoid Telegram rate limits (max 20 msgs/min in a chat)
                 await asyncio.sleep(6)
-                
+
             logger.info(f"✅ Finished sending {len(tests)} tests to channel.")
-            
+
         except Exception as e:
             logger.error("❌ Error sending batch tests: %s", e)
 
@@ -697,15 +741,30 @@ Use /help for commands. 📋"""
                 )
 
             elif text == '/status':
-                status = f"""📊 <b>Bot Status</b>
+                stats = self.topic_history.get_stats()
+                next_cat = CATEGORY_ROTATION[self.category_idx % len(CATEGORY_ROTATION)]
+                status = f"""📊 <b>Bot & Memory Status</b>
 
-📚 Posts sent: <b>{self.post_count}</b>
-🧪 Tests sent: <b>{self.test_count}</b>
-📝 Topics in history: <b>{self.topic_history.get_history_count()}</b>
-🧠 Detailed lesson records: <b>{self.topic_history.get_detailed_history_count()}</b>
+📚 Lessons Posted: <b>{self.post_count}</b>
+🧪 Quizzes Posted: <b>{self.test_count}</b>
+🧠 Detailed Lesson Records: <b>{stats['total_lessons']}</b>
 
-⏰ Next posts scheduled automatically.
-🟢 Bot is running smoothly!"""
+━━━━━━━━━━━━━━━━━━━━━
+🧠 <b>Deep Anti-Repetition Memory:</b>
+• 📦 Unique Items Taught: <b>{stats['unique_items_taught']}</b>
+  ├ 🔤 Vocabulary Words: <b>{stats['vocabulary_count']}</b>
+  ├ 🔗 Phrasal Verbs: <b>{stats['phrasal_verbs_count']}</b>
+  ├ 💬 Idioms & Phrases: <b>{stats['idioms_count']}</b>
+  ├ 📐 Grammar Rules: <b>{stats['grammar_rules_count']}</b>
+  ├ 🤝 Collocations: <b>{stats['collocations_count']}</b>
+  └ ⚠️ Confused Pairs: <b>{stats['mistakes_count']}</b>
+
+🔄 <b>Topic Cooldown Buffer:</b>
+• ⏳ Active in Cooldown: <b>{stats['topics_in_cooldown']} / {stats['cooldown_limit']}</b>
+• 📚 Total Curriculum Topics: <b>120+ across 10 categories</b>
+• 🎯 Next Target Skill: <b>{next_cat}</b>
+
+🟢 Bot is running smoothly & scheduled!"""
                 await self.telegram.send_message(chat_id, status, parse_mode='HTML')
 
             elif text == '/lesson':
@@ -770,8 +829,16 @@ Use /help for commands. 📋"""
                 )
 
             elif text == '/reset':
-                self.topic_history.reset_history()
-                await self.telegram.send_message(chat_id, "🔄 Topic history has been reset! ✅", parse_mode='HTML')
+                self.topic_history.reset_cooldown()
+                await self.telegram.send_message(
+                    chat_id,
+                    "🔄 <b>Topic cooldown buffer has been refreshed!</b>\n\nAll 120+ curriculum topics are now eligible for selection, while all previously taught vocabulary words, idioms, and grammar points remain registered in memory to prevent repetition. ✅",
+                    parse_mode='HTML'
+                )
+
+            elif text == '/resetall':
+                self.topic_history.reset_history(full_wipe=True)
+                await self.telegram.send_message(chat_id, "⚠️ <b>Full memory wipe completed!</b> All history and taught item registers have been reset.", parse_mode='HTML')
 
         except Exception as e:
             logger.error("❌ Error handling message: %s", e)
